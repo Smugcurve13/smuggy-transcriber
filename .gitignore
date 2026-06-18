@@ -1,0 +1,10 @@
+.env
+venv
+.claude
+*.ogg
+transcription.txt
+__pycache__/
+*.spec
+build/
+dist/
+.DS_Store
