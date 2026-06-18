@@ -77,34 +77,39 @@ class SetupWidget(QWidget):
 
     def __init__(self):
         super().__init__()
+        self._step_images = []  # (label, full-res pixmap) for responsive scaling
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
         self.heading = QLabel()
         self.heading.setTextFormat(Qt.RichText)
-        self.heading.setStyleSheet("font-size: 19px; font-weight: bold;")
+        self.heading.setStyleSheet("font-size: 23px; font-weight: bold;")
         self.heading.setWordWrap(True)
-        self.heading.setContentsMargins(30, 24, 30, 8)
+        self.heading.setContentsMargins(30, 26, 30, 10)
         outer.addWidget(self.heading)
 
         # Scrollable instructions, with a screenshot under each step.
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QScrollArea.NoFrame)
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QScrollArea.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         content = QWidget()
         body = QVBoxLayout(content)
-        body.setContentsMargins(30, 0, 30, 12)
-        body.setSpacing(10)
+        body.setContentsMargins(30, 0, 30, 16)
+        body.setSpacing(14)
 
         intro = QLabel(
             "To use SmuggyTranscriber you need your own free Groq API key. "
             "It only takes a minute:"
         )
         intro.setWordWrap(True)
+        intro.setStyleSheet("font-size: 15px;")
         body.addWidget(intro)
 
         open_btn = QPushButton("Open Groq Console  (console.groq.com)")
+        open_btn.setMinimumHeight(40)
+        open_btn.setStyleSheet("font-size: 14px;")
         open_btn.clicked.connect(
             lambda: QDesktopServices.openUrl(QUrl(CONSOLE_URL))
         )
@@ -122,8 +127,8 @@ class SetupWidget(QWidget):
                              "Save && Continue.")
         body.addStretch(1)
 
-        scroll.setWidget(content)
-        outer.addWidget(scroll, 1)
+        self._scroll.setWidget(content)
+        outer.addWidget(self._scroll, 1)
 
         # Fixed footer: the key box + save button stay visible while scrolling.
         footer = QWidget()
@@ -134,17 +139,20 @@ class SetupWidget(QWidget):
         self.key_input = QLineEdit()
         self.key_input.setEchoMode(QLineEdit.Password)
         self.key_input.setPlaceholderText("Paste your gsk_… key here")
+        self.key_input.setMinimumHeight(40)
+        self.key_input.setStyleSheet("font-size: 14px;")
         self.key_input.returnPressed.connect(self._save)
         footer_layout.addWidget(self.key_input)
 
         self.error_label = QLabel()
-        self.error_label.setStyleSheet("color: #c0392b;")
+        self.error_label.setStyleSheet("color: #c0392b; font-size: 14px;")
         self.error_label.setWordWrap(True)
         self.error_label.hide()
         footer_layout.addWidget(self.error_label)
 
         self.save_btn = QPushButton("Save && Continue")
-        self.save_btn.setMinimumHeight(40)
+        self.save_btn.setMinimumHeight(46)
+        self.save_btn.setStyleSheet("font-size: 15px; font-weight: 600;")
         self.save_btn.clicked.connect(self._save)
         footer_layout.addWidget(self.save_btn)
 
@@ -153,16 +161,32 @@ class SetupWidget(QWidget):
     def _add_step(self, layout, text, image=None):
         label = QLabel(text)
         label.setWordWrap(True)
-        label.setStyleSheet("font-weight: 600;")
+        label.setStyleSheet("font-size: 15px; font-weight: 600;")
         layout.addWidget(label)
         if image:
             pix = QPixmap(resource_path(os.path.join("assets", image)))
             if not pix.isNull():
                 holder = QLabel()
                 holder.setPixmap(
-                    pix.scaledToWidth(420, Qt.SmoothTransformation)
+                    pix.scaledToWidth(560, Qt.SmoothTransformation)
                 )
                 layout.addWidget(holder)
+                self._step_images.append((holder, pix))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._rescale_step_images()
+
+    def _rescale_step_images(self):
+        """Scale step screenshots to the scroll width (never above native size)."""
+        if not getattr(self, "_step_images", None):
+            return
+        avail = self._scroll.viewport().width() - 60  # content left+right margins
+        if avail <= 0:
+            return
+        for holder, pix in self._step_images:
+            width = min(avail, pix.width())
+            holder.setPixmap(pix.scaledToWidth(width, Qt.SmoothTransformation))
 
     def set_reason(self, status):
         """Tailor the headline to why we're here."""
@@ -369,7 +393,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("SmuggyTranscriber")
-        self.resize(660, 680)
+        self.resize(820, 800)
 
         self._stack = QStackedWidget()
         self.setCentralWidget(self._stack)
