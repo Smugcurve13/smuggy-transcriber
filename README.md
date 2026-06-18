@@ -13,7 +13,7 @@ more), with an optional language selector.
 
 ## For users (Windows)
 
-1. Download **`Transcriber.exe`** from the [Releases](../../releases) page.
+1. Download **`SmuggyTranscriber.exe`** from the [Releases](../../releases) page.
 2. Double-click it.
    - Windows may show a **SmartScreen** warning because the app isn't code-signed.
      Click **More info → Run anyway**. (It's safe — it's just unsigned.)
@@ -89,9 +89,9 @@ python transcribe.py    # transcribes ReelAudio-39184.mp3 -> transcription.txt
 
 A GitHub Actions workflow ([`.github/workflows/build-windows.yml`](.github/workflows/build-windows.yml))
 runs on a Windows runner, installs the deps, and packages the app with
-PyInstaller (`--onefile --windowed --name Transcriber`):
+PyInstaller (`--onefile --windowed --name SmuggyTranscriber`):
 
-- **Every push to `main`** uploads `Transcriber.exe` as a build **artifact**.
+- **Every push to `main`** uploads `SmuggyTranscriber.exe` as a build **artifact**.
 - **Pushing a `v*` tag** (e.g. `git tag v1.0 && git push --tags`) also
   attaches the `.exe` to a GitHub **Release** for users to download.
 

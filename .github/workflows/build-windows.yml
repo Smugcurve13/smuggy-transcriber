@@ -24,17 +24,17 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Build Transcriber.exe
-        run: pyinstaller --onefile --windowed --name Transcriber --add-data "assets;assets" app.py
+      - name: Build SmuggyTranscriber.exe
+        run: pyinstaller --onefile --windowed --name SmuggyTranscriber --add-data "assets;assets" app.py
 
       - name: Upload exe as build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Transcriber
-          path: dist/Transcriber.exe
+          name: SmuggyTranscriber
+          path: dist/SmuggyTranscriber.exe
 
       - name: Attach exe to Release (on v* tag)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/Transcriber.exe
+          files: dist/SmuggyTranscriber.exe
