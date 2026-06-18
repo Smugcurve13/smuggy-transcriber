@@ -70,6 +70,15 @@ def resource_path(rel):
     return os.path.join(base, rel)
 
 
+def app_version():
+    """Single source of truth for the version — read from the VERSION file."""
+    try:
+        with open(resource_path("VERSION"), encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return "0.0.0"
+
+
 def _accent_dot(size=9):
     dot = QLabel()
     dot.setFixedSize(size, size)
@@ -141,6 +150,8 @@ class SetupWidget(QWidget):
         brand.addWidget(label("audio → text, in one click", family=MONO, px=12, color=MUTED))
         header.addLayout(brand)
         header.addStretch(1)
+        header.addWidget(label(f"v{app_version()}", family=MONO, px=11, color=MUTED),
+                         0, Qt.AlignTop)
         outer.addLayout(header)
 
         self.heading = label("Let's get you set up.", px=24, weight=QFont.Bold,
