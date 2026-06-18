@@ -85,14 +85,22 @@ python transcribe.py    # transcribes ReelAudio-39184.mp3 -> transcription.txt
 | `app.py`      | PySide6 GUI (setup screen + main screen, threaded transcribe)  |
 | `transcribe.py` | CLI, imports from `core.py`                                  |
 
-### How the Windows `.exe` is built
+### How the apps are built
 
-A GitHub Actions workflow ([`.github/workflows/build-windows.yml`](.github/workflows/build-windows.yml))
-runs on a Windows runner, installs the deps, and packages the app with
-PyInstaller (`--onefile --windowed --name SmuggyTranscriber`):
+A GitHub Actions workflow ([`.github/workflows/build.yml`](.github/workflows/build.yml))
+packages the app with PyInstaller (`--onefile --windowed --name SmuggyTranscriber`)
+on two runners in parallel:
 
-- **Every push to `main`** uploads `SmuggyTranscriber.exe` as a build **artifact**.
-- **Pushing a `v*` tag** (e.g. `git tag v1.0 && git push --tags`) also
-  attaches the `.exe` to a GitHub **Release** for users to download.
+- **Windows** (`windows-latest`) → `SmuggyTranscriber.exe`
+- **macOS** (`macos-latest`) → `SmuggyTranscriber.app`, zipped with `ditto`
+  into `SmuggyTranscriber-macos.zip`
 
-No Windows machine is needed to build — the runner does it.
+On every push to `main` each build is uploaded as a **workflow artifact**
+(`SmuggyTranscriber-windows` / `SmuggyTranscriber-macos`). Pushing a `v*` tag
+(e.g. `git tag v1.0 && git push --tags`) also attaches both to a GitHub
+**Release** for users to download. No Windows or Mac machine is needed to
+build — the runners do it.
+
+> The macOS `.app` is unsigned, so the first launch needs **right-click → Open**
+> (or **System Settings → Privacy & Security → Open Anyway**) to get past
+> Gatekeeper — the Mac equivalent of the Windows SmartScreen prompt.
