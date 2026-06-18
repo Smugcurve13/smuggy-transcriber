@@ -82,8 +82,10 @@ python transcribe.py    # transcribes ReelAudio-39184.mp3 -> transcription.txt
 | ------------- | -------------------------------------------------------------- |
 | `core.py`     | GUI-free logic: key validation + transcription (unit-testable) |
 | `settings.py` | Per-user key storage via `QSettings`                           |
-| `app.py`      | PySide6 GUI (setup screen + main screen, threaded transcribe)  |
+| `theme.py`    | Green-on-black design language: palette, fonts, Qt stylesheet  |
+| `app.py`      | PySide6 GUI (onboarding, drop-zone, transcribing, result)      |
 | `transcribe.py` | CLI, imports from `core.py`                                  |
+| `assets/`     | Bundled fonts, app icon (`.ico`/`.icns`), logo, setup screenshots |
 
 ### How the apps are built
 

@@ -25,7 +25,7 @@ jobs:
           pip install pyinstaller
 
       - name: Build SmuggyTranscriber.exe
-        run: pyinstaller --onefile --windowed --name SmuggyTranscriber --add-data "assets;assets" app.py
+        run: pyinstaller --onefile --windowed --name SmuggyTranscriber --icon assets/app.ico --add-data "assets;assets" app.py
 
       - name: Upload exe as build artifact
         uses: actions/upload-artifact@v4
@@ -57,7 +57,7 @@ jobs:
           pip install pyinstaller
 
       - name: Build SmuggyTranscriber.app
-        run: pyinstaller --onefile --windowed --name SmuggyTranscriber --add-data "assets:assets" app.py
+        run: pyinstaller --onefile --windowed --name SmuggyTranscriber --icon assets/app.icns --add-data "assets:assets" app.py
 
       - name: Zip the .app bundle (ditto preserves the bundle structure)
         run: ditto -c -k --keepParent "dist/SmuggyTranscriber.app" SmuggyTranscriber-macos.zip

@@ -1,7 +1,8 @@
 """SmuggyTranscriber — a dead-simple PySide6 desktop transcription app.
 
-Run with ``python app.py``. On Windows it ships as a double-click
-``Transcriber.exe`` built by GitHub Actions (see .github/workflows).
+Green-on-black redesign: Space Grotesk + JetBrains Mono, bright-green accent.
+Run with ``python app.py``; on Windows/macOS it ships as a packaged app built
+by GitHub Actions (see .github/workflows/build.yml).
 """
 
 import os
@@ -9,14 +10,15 @@ import sys
 
 from dotenv import load_dotenv
 from groq import AuthenticationError
-from PySide6.QtCore import Qt, QThread, QObject, Signal, QUrl
-from PySide6.QtGui import QGuiApplication, QDesktopServices, QPixmap
+from PySide6.QtCore import Qt, QThread, QObject, Signal, QUrl, QTimer
+from PySide6.QtGui import QGuiApplication, QDesktopServices, QPixmap, QIcon, QFont
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
     QWidget,
     QStackedWidget,
     QScrollArea,
+    QFrame,
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
@@ -24,12 +26,29 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QComboBox,
     QPlainTextEdit,
+    QProgressBar,
     QFileDialog,
     QMessageBox,
+    QSizePolicy,
 )
 
 import core
 import settings
+import theme
+from theme import (
+    font,
+    label,
+    SANS,
+    MONO,
+    ACCENT,
+    ACCENT_HI,
+    TEXT,
+    TEXT_2,
+    TEXT_3,
+    MUTED,
+    DISABLED,
+    BORDER,
+)
 
 ORG = "SmuggyTranscriber"
 APP_NAME = "Transcriber"
@@ -38,11 +57,35 @@ AUDIO_FILTER = (
     "Audio files (*.mp3 *.wav *.m4a *.ogg *.webm *.mp4 *.flac);;All files (*)"
 )
 
+# Solid blends of the accent over the dark surfaces (avoids rgba-alpha quirks).
+TINT_NUM = "#16301f"     # numbered step circles
+TINT_DROP = "#14231a"    # drop-zone icon circle
+TINT_BADGE = "#172e20"   # language badge
+TINT_BORDER = "#244a31"
+
 
 def resource_path(rel):
-    """Resolve a bundled resource path, both in dev and in a PyInstaller exe."""
+    """Resolve a bundled resource path, both in dev and in a packaged app."""
     base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base, rel)
+
+
+def _accent_dot(size=9):
+    dot = QLabel()
+    dot.setFixedSize(size, size)
+    dot.setStyleSheet(f"background: {ACCENT}; border-radius: {size // 2}px;")
+    return dot
+
+
+def _circle_number(n):
+    lbl = QLabel(str(n))
+    lbl.setFixedSize(24, 24)
+    lbl.setAlignment(Qt.AlignCenter)
+    lbl.setFont(font(MONO, 12, QFont.DemiBold))
+    lbl.setStyleSheet(
+        f"background: {TINT_NUM}; color: {ACCENT_HI}; border-radius: 12px;"
+    )
+    return lbl
 
 
 class TranscribeWorker(QObject):
@@ -78,110 +121,124 @@ class SetupWidget(QWidget):
     def __init__(self):
         super().__init__()
         self._step_images = []  # (label, full-res pixmap) for responsive scaling
+
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        self.heading = QLabel()
-        self.heading.setTextFormat(Qt.RichText)
-        self.heading.setStyleSheet("font-size: 23px; font-weight: bold;")
-        self.heading.setWordWrap(True)
-        self.heading.setContentsMargins(30, 26, 30, 10)
-        outer.addWidget(self.heading)
+        # Brand header: logo + name + tagline.
+        header = QHBoxLayout()
+        header.setContentsMargins(28, 26, 28, 4)
+        header.setSpacing(14)
+        logo = QLabel()
+        logo.setFixedSize(52, 52)
+        logo.setScaledContents(True)
+        logo.setPixmap(QPixmap(theme.logo_path()))
+        header.addWidget(logo)
+        brand = QVBoxLayout()
+        brand.setSpacing(2)
+        brand.addWidget(label("SmuggyTranscriber", px=19, weight=QFont.Bold, color=TEXT))
+        brand.addWidget(label("audio → text, in one click", family=MONO, px=12, color=MUTED))
+        header.addLayout(brand)
+        header.addStretch(1)
+        outer.addLayout(header)
 
-        # Scrollable instructions, with a screenshot under each step.
+        self.heading = label("Let's get you set up.", px=24, weight=QFont.Bold,
+                             color=TEXT, wrap=True)
+        self.heading.setContentsMargins(28, 16, 28, 0)
+        outer.addWidget(self.heading)
+        self.subtitle = label(
+            "You'll need your own free Groq API key — it only takes about a minute.",
+            px=14, color=TEXT_3, wrap=True)
+        self.subtitle.setContentsMargins(28, 5, 28, 4)
+        outer.addWidget(self.subtitle)
+
+        # Scrollable steps, each followed by its screenshot.
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QScrollArea.NoFrame)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         content = QWidget()
         body = QVBoxLayout(content)
-        body.setContentsMargins(30, 0, 30, 16)
+        body.setContentsMargins(28, 10, 28, 14)
         body.setSpacing(14)
 
-        intro = QLabel(
-            "To use SmuggyTranscriber you need your own free Groq API key. "
-            "It only takes a minute:"
-        )
-        intro.setWordWrap(True)
-        intro.setStyleSheet("font-size: 15px;")
-        body.addWidget(intro)
-
-        open_btn = QPushButton("Open Groq Console  (console.groq.com)")
-        open_btn.setMinimumHeight(40)
-        open_btn.setStyleSheet("font-size: 14px;")
+        open_btn = QPushButton("Open Groq Console    ↗")
+        open_btn.setCursor(Qt.PointingHandCursor)
         open_btn.clicked.connect(
             lambda: QDesktopServices.openUrl(QUrl(CONSOLE_URL))
         )
         body.addWidget(open_btn)
 
-        self._add_step(body, "1.  Sign in (or create a free account).",
+        self._add_step(body, 1, "Open the Groq Console and sign in.",
                        "step-1-signin.png")
-        self._add_step(body, "2.  Open  API Keys , then click  Create API Key.",
+        self._add_step(body, 2, "Go to API Keys, then Create API Key.",
                        "step-2-api-keys.png")
-        self._add_step(body, "3.  Give it any name and click  Submit.",
+        self._add_step(body, 3, "Give it any name and hit Submit.",
                        "step-3-create-key.png")
-        self._add_step(body, "4.  Copy the key — it starts with “gsk_” and is "
-                             "shown only once.", "step-4-copy-key.png")
-        self._add_step(body, "5.  Paste it in the box below, then "
-                             "Save && Continue.")
+        self._add_step(body, 4, "Copy the key — it starts with gsk_ and "
+                                "shows only once.", "step-4-copy-key.png")
         body.addStretch(1)
-
         self._scroll.setWidget(content)
         outer.addWidget(self._scroll, 1)
 
-        # Fixed footer: the key box + save button stay visible while scrolling.
-        footer = QWidget()
-        footer_layout = QVBoxLayout(footer)
-        footer_layout.setContentsMargins(30, 8, 30, 20)
-        footer_layout.setSpacing(8)
+        # Fixed footer: key box + save + privacy note.
+        footer = QVBoxLayout()
+        footer.setContentsMargins(28, 12, 28, 22)
+        footer.setSpacing(10)
 
         self.key_input = QLineEdit()
         self.key_input.setEchoMode(QLineEdit.Password)
-        self.key_input.setPlaceholderText("Paste your gsk_… key here")
-        self.key_input.setMinimumHeight(40)
-        self.key_input.setStyleSheet("font-size: 14px;")
+        self.key_input.setPlaceholderText("gsk_••••••••••••••••••••••")
         self.key_input.returnPressed.connect(self._save)
-        footer_layout.addWidget(self.key_input)
+        footer.addWidget(self.key_input)
 
-        self.error_label = QLabel()
-        self.error_label.setStyleSheet("color: #c0392b; font-size: 14px;")
-        self.error_label.setWordWrap(True)
+        self.error_label = label("", px=13, color="#ff8a80", wrap=True)
         self.error_label.hide()
-        footer_layout.addWidget(self.error_label)
+        footer.addWidget(self.error_label)
 
         self.save_btn = QPushButton("Save && Continue")
-        self.save_btn.setMinimumHeight(46)
-        self.save_btn.setStyleSheet("font-size: 15px; font-weight: 600;")
+        self.save_btn.setObjectName("primary")
+        self.save_btn.setMinimumHeight(48)
+        self.save_btn.setCursor(Qt.PointingHandCursor)
         self.save_btn.clicked.connect(self._save)
-        footer_layout.addWidget(self.save_btn)
+        footer.addWidget(self.save_btn)
 
-        outer.addWidget(footer)
+        note = QHBoxLayout()
+        note.setSpacing(7)
+        note.addWidget(_accent_dot(5))
+        note.addWidget(label("Your key is stored only on this device — never uploaded.",
+                             family=MONO, px=11, color=MUTED))
+        note.addStretch(1)
+        footer.addLayout(note)
 
-    def _add_step(self, layout, text, image=None):
-        label = QLabel(text)
-        label.setWordWrap(True)
-        label.setStyleSheet("font-size: 15px; font-weight: 600;")
-        layout.addWidget(label)
-        if image:
-            pix = QPixmap(resource_path(os.path.join("assets", image)))
-            if not pix.isNull():
-                holder = QLabel()
-                holder.setPixmap(
-                    pix.scaledToWidth(560, Qt.SmoothTransformation)
-                )
-                layout.addWidget(holder)
-                self._step_images.append((holder, pix))
+        outer.addLayout(footer)
+
+    def _add_step(self, layout, n, text, image):
+        row = QHBoxLayout()
+        row.setSpacing(13)
+        row.addWidget(_circle_number(n), 0, Qt.AlignTop)
+        row.addWidget(label(text, px=14, color=TEXT_2, wrap=True), 1)
+        layout.addLayout(row)
+
+        pix = QPixmap(resource_path(os.path.join("assets", image)))
+        if not pix.isNull():
+            holder = QLabel()
+            holder.setStyleSheet(
+                f"background: transparent; border: 1px solid {BORDER};"
+            )
+            holder.setPixmap(pix.scaledToWidth(560, Qt.SmoothTransformation))
+            layout.addWidget(holder)
+            self._step_images.append((holder, pix))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._rescale_step_images()
 
     def _rescale_step_images(self):
-        """Scale step screenshots to the scroll width (never above native size)."""
         if not getattr(self, "_step_images", None):
             return
-        avail = self._scroll.viewport().width() - 60  # content left+right margins
+        avail = self._scroll.viewport().width() - 56  # content left+right margins
         if avail <= 0:
             return
         for holder, pix in self._step_images:
@@ -189,13 +246,17 @@ class SetupWidget(QWidget):
             holder.setPixmap(pix.scaledToWidth(width, Qt.SmoothTransformation))
 
     def set_reason(self, status):
-        """Tailor the headline to why we're here."""
         if status == "invalid":
-            self.heading.setText("⚠️  Your API key is invalid or expired")
+            self.heading.setText("That key didn't work.")
+            self.subtitle.setText(
+                "It looks invalid or expired — let's add a new one.")
         elif status == "reenter":
-            self.heading.setText("Enter a new Groq API key")
-        else:  # "missing"
-            self.heading.setText("\U0001f44b  Welcome! Add your Groq API key to start")
+            self.heading.setText("Enter a new API key.")
+            self.subtitle.setText("Paste a fresh Groq key below.")
+        else:
+            self.heading.setText("Let's get you set up.")
+            self.subtitle.setText(
+                "You'll need your own free Groq API key — it only takes about a minute.")
 
     def _save(self):
         key = self.key_input.text().strip()
@@ -218,13 +279,11 @@ class SetupWidget(QWidget):
         elif status == "invalid":
             self._show_error(
                 "That key was rejected (invalid or expired). "
-                "Double-check it and try again."
-            )
+                "Double-check it and try again.")
         elif status == "network_error":
             self._show_error(
                 "Couldn't reach Groq to verify the key. "
-                "Check your internet connection and try again."
-            )
+                "Check your internet connection and try again.")
         else:
             self._show_error("Please paste your key first.")
 
@@ -233,146 +292,322 @@ class SetupWidget(QWidget):
         self.error_label.show()
 
 
+class DropZone(QFrame):
+    """Dashed drop target — click to browse, or drop an audio file onto it."""
+
+    clicked = Signal()
+    fileDropped = Signal(str)
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("dropzone")
+        self.setAcceptDrops(True)
+        self.setCursor(Qt.PointingHandCursor)
+
+        lay = QVBoxLayout(self)
+        lay.setAlignment(Qt.AlignCenter)
+        lay.setSpacing(15)
+
+        self.icon = QLabel("↓")
+        self.icon.setFixedSize(84, 84)
+        self.icon.setAlignment(Qt.AlignCenter)
+        self.icon.setFont(font(SANS, 34, QFont.Bold))
+        self.icon.setStyleSheet(
+            f"background: {TINT_DROP}; color: {ACCENT};"
+            f" border: 1px solid {TINT_BORDER}; border-radius: 42px;")
+        lay.addWidget(self.icon, 0, Qt.AlignHCenter)
+
+        self.title = label("Drop your audio file here", px=18,
+                           weight=QFont.DemiBold, color=TEXT)
+        self.title.setAlignment(Qt.AlignCenter)
+        lay.addWidget(self.title)
+
+        self.browse = label("or browse files", px=14, weight=QFont.Medium,
+                            color=ACCENT)
+        self.browse.setAlignment(Qt.AlignCenter)
+        lay.addWidget(self.browse)
+
+        self.formats = label("MP3 · WAV · M4A · OGG · FLAC · MP4    —    max 25 MB",
+                            family=MONO, px=11, color=MUTED)
+        self.formats.setAlignment(Qt.AlignCenter)
+        lay.addWidget(self.formats)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            self.setStyleSheet(
+                "#dropzone { background: #141a16; "
+                f"border: 2px dashed {ACCENT}; border-radius: 16px; }}")
+
+    def dragLeaveEvent(self, event):
+        self.setStyleSheet("")
+
+    def dropEvent(self, event):
+        self.setStyleSheet("")
+        urls = event.mimeData().urls()
+        if urls:
+            self.fileDropped.emit(urls[0].toLocalFile())
+
+    def show_file(self, name, sub):
+        self.icon.setText("♪")
+        self.title.setText(name)
+        self.browse.setText(f"{sub}   ·   click to choose a different file")
+
+    def show_empty(self):
+        self.icon.setText("↓")
+        self.title.setText("Drop your audio file here")
+        self.browse.setText("or browse files")
+
+
 class MainWidget(QWidget):
-    """The main screen: choose a file, transcribe, copy/save the result."""
+    """Main flow: pick a file, transcribe, then copy/save the result."""
 
     reenter_key = Signal(str)
 
     def __init__(self):
         super().__init__()
         self._file_path = None
+        self._file_sub = ""
+        self._language = None
+        self._lang_label = ""
         self._thread = None
         self._worker = None
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(30, 24, 30, 24)
-        layout.setSpacing(12)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        file_row = QHBoxLayout()
-        self.choose_btn = QPushButton("Choose audio file…")
-        self.choose_btn.clicked.connect(self._choose_file)
-        file_row.addWidget(self.choose_btn)
-        self.file_label = QLabel("No file selected")
-        self.file_label.setStyleSheet("color: #555;")
-        file_row.addWidget(self.file_label, 1)
-        layout.addLayout(file_row)
+        top = QHBoxLayout()
+        top.setContentsMargins(26, 20, 26, 8)
+        top.addWidget(label("New transcription", family=MONO, px=11,
+                            color=MUTED, spacing=1.5, upper=True))
+        top.addStretch(1)
+        reenter = QPushButton("Re-enter key")
+        reenter.setObjectName("link")
+        reenter.setCursor(Qt.PointingHandCursor)
+        reenter.clicked.connect(lambda: self.reenter_key.emit("reenter"))
+        top.addWidget(reenter)
+        root.addLayout(top)
 
-        lang_row = QHBoxLayout()
-        lang_row.addWidget(QLabel("Language:"))
+        self._stack = QStackedWidget()
+        root.addWidget(self._stack, 1)
+        self._stack.addWidget(self._build_pick_page())
+        self._stack.addWidget(self._build_busy_page())
+        self._stack.addWidget(self._build_result_page())
+        self._stack.setCurrentIndex(0)
+
+    # --- pages -----------------------------------------------------------
+    def _build_pick_page(self):
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(26, 14, 26, 22)
+        lay.setSpacing(16)
+
+        self.dropzone = DropZone()
+        self.dropzone.clicked.connect(self._choose_file)
+        self.dropzone.fileDropped.connect(self._set_file)
+        lay.addWidget(self.dropzone, 1)
+
+        bar = QHBoxLayout()
+        bar.setSpacing(12)
         self.lang_combo = QComboBox()
-        for label in core.LANGUAGES:
-            self.lang_combo.addItem(label)
-        lang_row.addWidget(self.lang_combo)
-        lang_row.addStretch(1)
-        self.key_btn = QPushButton("Re-enter API key")
-        self.key_btn.clicked.connect(lambda: self.reenter_key.emit("reenter"))
-        lang_row.addWidget(self.key_btn)
-        layout.addLayout(lang_row)
-
+        self.lang_combo.setCursor(Qt.PointingHandCursor)
+        for lbl in core.LANGUAGES:
+            self.lang_combo.addItem("Language:  " + lbl, lbl)
+        bar.addWidget(self.lang_combo)
+        bar.addStretch(1)
         self.transcribe_btn = QPushButton("Transcribe")
-        self.transcribe_btn.setMinimumHeight(46)
-        self.transcribe_btn.setStyleSheet("font-size: 16px; font-weight: bold;")
+        self.transcribe_btn.setObjectName("primary")
+        self.transcribe_btn.setMinimumWidth(150)
+        self.transcribe_btn.setEnabled(False)
+        self.transcribe_btn.setCursor(Qt.PointingHandCursor)
         self.transcribe_btn.clicked.connect(self._start)
-        layout.addWidget(self.transcribe_btn)
+        bar.addWidget(self.transcribe_btn)
+        lay.addLayout(bar)
 
-        self.status_label = QLabel("")
-        self.status_label.setAlignment(Qt.AlignCenter)
-        self.status_label.setStyleSheet("color: #555;")
-        layout.addWidget(self.status_label)
+        self.helper = label("Add an audio file to enable transcription",
+                           family=MONO, px=11, color=DISABLED)
+        self.helper.setAlignment(Qt.AlignCenter)
+        lay.addWidget(self.helper)
+        return page
+
+    def _build_busy_page(self):
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(26, 20, 26, 22)
+        lay.addStretch(1)
+
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        row.setAlignment(Qt.AlignCenter)
+        row.addWidget(_accent_dot(10))
+        row.addWidget(label("Transcribing…", px=19, weight=QFont.DemiBold,
+                            color=TEXT))
+        lay.addLayout(row)
+
+        sub = label("Sending to Groq · whisper-large-v3", family=MONO, px=12,
+                    color=MUTED)
+        sub.setAlignment(Qt.AlignCenter)
+        sub.setContentsMargins(0, 10, 0, 0)
+        lay.addWidget(sub)
+
+        lay.addStretch(1)
+
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 0)  # indeterminate
+        self.progress.setTextVisible(False)
+        self.progress.setFixedHeight(6)
+        lay.addWidget(self.progress)
+        cap = label("Usually under 10 seconds", family=MONO, px=11,
+                    color=DISABLED)
+        cap.setAlignment(Qt.AlignCenter)
+        cap.setContentsMargins(0, 11, 0, 0)
+        lay.addWidget(cap)
+        return page
+
+    def _build_result_page(self):
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(26, 14, 26, 22)
+        lay.setSpacing(14)
+
+        top = QHBoxLayout()
+        top.setSpacing(12)
+        top.addWidget(self._make_chip())
+        top.addStretch(1)
+        self.lang_badge = QLabel("")
+        self.lang_badge.setFont(font(MONO, 12, QFont.Medium))
+        self.lang_badge.setStyleSheet(
+            f"background: {TINT_BADGE}; color: {ACCENT_HI};"
+            f" border: 1px solid {TINT_BORDER}; border-radius: 8px; padding: 6px 11px;")
+        top.addWidget(self.lang_badge, 0, Qt.AlignVCenter)
+        lay.addLayout(top)
 
         self.result = QPlainTextEdit()
+        self.result.setReadOnly(True)
         self.result.setPlaceholderText("Your transcription will appear here.")
-        layout.addWidget(self.result, 1)
+        lay.addWidget(self.result, 1)
 
-        action_row = QHBoxLayout()
-        self.copy_btn = QPushButton("Copy")
+        meta = QHBoxLayout()
+        self.meta_label = label("", family=MONO, px=12, color=MUTED)
+        meta.addWidget(self.meta_label)
+        meta.addStretch(1)
+        lay.addLayout(meta)
+
+        actions = QHBoxLayout()
+        actions.setSpacing(10)
+        self.copy_btn = QPushButton("Copy text")
+        self.copy_btn.setObjectName("primary")
+        self.copy_btn.setCursor(Qt.PointingHandCursor)
         self.copy_btn.clicked.connect(self._copy)
-        self.save_btn = QPushButton("Save as .txt")
-        self.save_btn.clicked.connect(self._save_txt)
-        action_row.addWidget(self.copy_btn)
-        action_row.addWidget(self.save_btn)
-        action_row.addStretch(1)
-        layout.addLayout(action_row)
+        self.savetxt_btn = QPushButton("Save as .txt")
+        self.savetxt_btn.setCursor(Qt.PointingHandCursor)
+        self.savetxt_btn.clicked.connect(self._save_txt)
+        actions.addWidget(self.copy_btn)
+        actions.addWidget(self.savetxt_btn)
+        actions.addStretch(1)
+        newfile = QPushButton("↻  New file")
+        newfile.setObjectName("link")
+        newfile.setCursor(Qt.PointingHandCursor)
+        newfile.clicked.connect(self._new_file)
+        actions.addWidget(newfile)
+        lay.addLayout(actions)
+        return page
 
-        self._set_results_enabled(False)
+    def _make_chip(self):
+        chip = QFrame()
+        chip.setObjectName("chip")
+        chip.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Maximum)
+        h = QHBoxLayout(chip)
+        h.setContentsMargins(13, 8, 15, 8)
+        h.setSpacing(11)
+        h.addWidget(label("♪", px=15, color=ACCENT))
+        box = QVBoxLayout()
+        box.setSpacing(2)
+        self._chip_name = label("", px=13, weight=QFont.Medium, color=TEXT)
+        self._chip_sub = label("", family=MONO, px=11, color=MUTED)
+        box.addWidget(self._chip_name)
+        box.addWidget(self._chip_sub)
+        h.addLayout(box)
+        return chip
 
-    def _set_results_enabled(self, on):
-        self.copy_btn.setEnabled(on)
-        self.save_btn.setEnabled(on)
-
+    # --- file selection --------------------------------------------------
     def _choose_file(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Choose audio file", "", AUDIO_FILTER
-        )
-        if not path:
+            self, "Choose audio file", "", AUDIO_FILTER)
+        if path:
+            self._set_file(path)
+
+    def _set_file(self, path):
+        if not path or not os.path.isfile(path):
             return
         size = os.path.getsize(path)
         if size > core.MAX_BYTES:
             QMessageBox.warning(
-                self,
-                "File too large",
+                self, "File too large",
                 f"That file is {size / (1024 * 1024):.1f} MB, but Groq's "
                 "limit is 25 MB.\nPlease choose a smaller file, or trim/"
-                "compress this one first.",
-            )
+                "compress this one first.")
             return
         self._file_path = path
-        self.file_label.setText(os.path.basename(path))
+        name = os.path.basename(path)
+        ext = os.path.splitext(name)[1].lstrip(".").lower() or "audio"
+        self._file_sub = f"{size / (1024 * 1024):.1f} MB · {ext}"
+        self.dropzone.show_file(name, self._file_sub)
+        self.transcribe_btn.setEnabled(True)
+        self.helper.setText("Ready — hit Transcribe")
 
+    # --- transcription ---------------------------------------------------
     def _start(self):
         if not self._file_path:
-            QMessageBox.information(self, "No file", "Choose an audio file first.")
             return
-
         api_key = settings.get_api_key()
-        language = core.LANGUAGES[self.lang_combo.currentText()]
+        self._lang_label = self.lang_combo.currentData()
+        self._language = core.LANGUAGES[self._lang_label]
 
-        self._set_busy(True)
-        self.result.clear()
-        self._set_results_enabled(False)
-        self.status_label.setText("Transcribing… please wait.")
-
+        self._stack.setCurrentIndex(1)  # busy
         self._thread = QThread()
-        self._worker = TranscribeWorker(self._file_path, api_key, language)
+        self._worker = TranscribeWorker(self._file_path, api_key, self._language)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.finished.connect(self._on_finished)
         self._worker.error.connect(self._on_error)
         self._worker.auth_error.connect(self._on_auth_error)
-        # Tear the thread down once any terminal signal has fired.
         self._worker.finished.connect(self._thread.quit)
         self._worker.error.connect(self._thread.quit)
         self._worker.auth_error.connect(self._thread.quit)
         self._thread.finished.connect(self._thread.deleteLater)
         self._thread.start()
 
-    def _set_busy(self, busy):
-        self.transcribe_btn.setEnabled(not busy)
-        self.choose_btn.setEnabled(not busy)
-        if not busy:
-            self.status_label.setText("")
-
     def _on_finished(self, text):
-        self._set_busy(False)
         self.result.setPlainText(text)
-        self._set_results_enabled(bool(text.strip()))
+        words = len(text.split())
+        self.meta_label.setText(f"{words} words · {len(text)} characters")
+        self.lang_badge.setText(self._lang_label)
+        self._chip_name.setText(os.path.basename(self._file_path))
+        self._chip_sub.setText(self._file_sub)
+        self._stack.setCurrentIndex(2)  # result
 
     def _on_error(self, msg):
-        self._set_busy(False)
+        self._stack.setCurrentIndex(0)
         QMessageBox.critical(self, "Transcription failed", msg)
 
     def _on_auth_error(self):
-        self._set_busy(False)
+        self._stack.setCurrentIndex(0)
         QMessageBox.warning(
-            self,
-            "API key rejected",
-            "Your API key was rejected. Please enter a new one.",
-        )
+            self, "API key rejected",
+            "Your API key was rejected. Please enter a new one.")
         self.reenter_key.emit("invalid")
 
+    # --- result actions --------------------------------------------------
     def _copy(self):
         QGuiApplication.clipboard().setText(self.result.toPlainText())
-        self.status_label.setText("Copied to clipboard.")
+        self.copy_btn.setText("Copied ✓")
+        QTimer.singleShot(1400, lambda: self.copy_btn.setText("Copy text"))
 
     def _save_txt(self):
         default_name = "transcription.txt"
@@ -380,20 +615,30 @@ class MainWidget(QWidget):
             stem = os.path.splitext(os.path.basename(self._file_path))[0]
             default_name = f"{stem}.txt"
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save transcription", default_name, "Text files (*.txt)"
-        )
+            self, "Save transcription", default_name, "Text files (*.txt)")
         if not path:
             return
         with open(path, "w", encoding="utf-8") as f:
             f.write(self.result.toPlainText())
-        self.status_label.setText(f"Saved to {os.path.basename(path)}")
+        self.savetxt_btn.setText("Saved ✓")
+        QTimer.singleShot(1400, lambda: self.savetxt_btn.setText("Save as .txt"))
+
+    def _new_file(self):
+        self._file_path = None
+        self._file_sub = ""
+        self.dropzone.show_empty()
+        self.transcribe_btn.setEnabled(False)
+        self.helper.setText("Add an audio file to enable transcription")
+        self.result.clear()
+        self._stack.setCurrentIndex(0)
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("SmuggyTranscriber")
-        self.resize(820, 800)
+        self.resize(620, 780)
+        self.setMinimumSize(520, 600)
 
         self._stack = QStackedWidget()
         self.setCentralWidget(self._stack)
@@ -426,7 +671,6 @@ def _resolve_startup_screen(window):
             window.show_setup(status)
             return
 
-        # network_error: don't blame the key — let the user decide.
         box = QMessageBox(window)
         box.setIcon(QMessageBox.Warning)
         box.setWindowTitle("Couldn't verify your key")
@@ -444,6 +688,11 @@ def main():
     app = QApplication(sys.argv)
     app.setOrganizationName(ORG)
     app.setApplicationName(APP_NAME)
+    theme.apply(app)
+
+    icon_path = resource_path(os.path.join("assets", "app-icon.png"))
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
 
     window = MainWindow()
     _resolve_startup_screen(window)
