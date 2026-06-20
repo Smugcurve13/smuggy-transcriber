@@ -122,6 +122,24 @@ class TranscribeWorker(QObject):
             self.error.emit(str(exc))
 
 
+class RomaniseWorker(QObject):
+    """Transliterates Devanagari to Hinglish off the UI thread."""
+
+    finished = Signal(str)
+    error = Signal(str)
+
+    def __init__(self, text, api_key):
+        super().__init__()
+        self._text = text
+        self._api_key = api_key
+
+    def run(self):
+        try:
+            self.finished.emit(core.romanise_hindi(self._text, self._api_key))
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
 class SetupWidget(QWidget):
     """First-run / recovery screen: explain how to get a key and save it."""
 
@@ -387,6 +405,8 @@ class MainWidget(QWidget):
         self._lang_label = ""
         self._thread = None
         self._worker = None
+        self._original_text = ""
+        self._hinglish_text = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -496,6 +516,9 @@ class MainWidget(QWidget):
             f"background: {TINT_BADGE}; color: {ACCENT_HI};"
             f" border: 1px solid {TINT_BORDER}; border-radius: 8px; padding: 6px 11px;")
         top.addWidget(self.lang_badge, 0, Qt.AlignVCenter)
+        self._lang_toggle = self._make_lang_toggle()
+        self._lang_toggle.hide()
+        top.addWidget(self._lang_toggle, 0, Qt.AlignVCenter)
         lay.addLayout(top)
 
         self.result = QPlainTextEdit()
@@ -546,6 +569,82 @@ class MainWidget(QWidget):
         h.addLayout(box)
         return chip
 
+    def _make_lang_toggle(self):
+        frame = QFrame()
+        frame.setObjectName("seg")
+        frame.setStyleSheet(
+            f"#seg {{ border: 1px solid {TINT_BORDER}; border-radius: 9px;"
+            " background: transparent; }")
+        row = QHBoxLayout(frame)
+        row.setContentsMargins(3, 3, 3, 3)
+        row.setSpacing(3)
+        self._hindi_btn = QPushButton("Hindi")
+        self._hindi_btn.setCursor(Qt.PointingHandCursor)
+        self._hindi_btn.clicked.connect(self._show_hindi)
+        self._hinglish_btn = QPushButton("Hinglish")
+        self._hinglish_btn.setCursor(Qt.PointingHandCursor)
+        self._hinglish_btn.clicked.connect(self._show_hinglish)
+        row.addWidget(self._hindi_btn)
+        row.addWidget(self._hinglish_btn)
+        return frame
+
+    def _seg_style(self, active):
+        if active:
+            bg, color, weight = TINT_BADGE, ACCENT_HI, 600
+        else:
+            bg, color, weight = "transparent", MUTED, 500
+        base = (f"background: {bg}; color: {color}; border: none;"
+                f" border-radius: 7px; padding: 5px 14px;"
+                f" font-weight: {weight}; min-height: 0;")
+        return f"QPushButton {{ {base} }} QPushButton:hover {{ {base} }}"
+
+    def _set_lang_view(self, active):
+        self._hindi_btn.setStyleSheet(self._seg_style(active == "hindi"))
+        self._hinglish_btn.setStyleSheet(self._seg_style(active == "hinglish"))
+
+    def _show_text(self, text):
+        self.result.setPlainText(text)
+        self.meta_label.setText(
+            f"{len(text.split())} words · {len(text)} characters")
+
+    def _show_hindi(self):
+        self._set_lang_view("hindi")
+        self._show_text(self._original_text)
+
+    def _show_hinglish(self):
+        if self._hinglish_text is not None:
+            self._set_lang_view("hinglish")
+            self._show_text(self._hinglish_text)
+            return
+        self._hindi_btn.setEnabled(False)
+        self._hinglish_btn.setEnabled(False)
+        self._hinglish_btn.setText("Converting…")
+        self._rthread = QThread()
+        self._rworker = RomaniseWorker(self._original_text, settings.get_api_key())
+        self._rworker.moveToThread(self._rthread)
+        self._rthread.started.connect(self._rworker.run)
+        self._rworker.finished.connect(self._on_romanised)
+        self._rworker.error.connect(self._on_romanise_error)
+        self._rworker.finished.connect(self._rthread.quit)
+        self._rworker.error.connect(self._rthread.quit)
+        self._rthread.finished.connect(self._rthread.deleteLater)
+        self._rthread.start()
+
+    def _on_romanised(self, text):
+        self._hinglish_text = text
+        self._hindi_btn.setEnabled(True)
+        self._hinglish_btn.setEnabled(True)
+        self._hinglish_btn.setText("Hinglish")
+        self._set_lang_view("hinglish")
+        self._show_text(text)
+
+    def _on_romanise_error(self, msg):
+        self._hindi_btn.setEnabled(True)
+        self._hinglish_btn.setEnabled(True)
+        self._hinglish_btn.setText("Hinglish")
+        self._set_lang_view("hindi")
+        QMessageBox.critical(self, "Couldn't convert to Hinglish", msg)
+
     # --- file selection --------------------------------------------------
     def _choose_file(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -595,12 +694,20 @@ class MainWidget(QWidget):
         self._thread.start()
 
     def _on_finished(self, text):
-        self.result.setPlainText(text)
-        words = len(text.split())
-        self.meta_label.setText(f"{words} words · {len(text)} characters")
+        self._original_text = text
+        self._hinglish_text = None
+        self._show_text(text)
         self.lang_badge.setText(self._lang_label)
         self._chip_name.setText(os.path.basename(self._file_path))
         self._chip_sub.setText(self._file_sub)
+        if core.has_devanagari(text):
+            self.lang_badge.hide()
+            self._hinglish_btn.setText("Hinglish")
+            self._set_lang_view("hindi")
+            self._lang_toggle.show()
+        else:
+            self._lang_toggle.hide()
+            self.lang_badge.show()
         self._stack.setCurrentIndex(2)  # result
 
     def _on_error(self, msg):
@@ -637,6 +744,9 @@ class MainWidget(QWidget):
     def _new_file(self):
         self._file_path = None
         self._file_sub = ""
+        self._hinglish_text = None
+        self._lang_toggle.hide()
+        self.lang_badge.show()
         self.dropzone.show_empty()
         self.transcribe_btn.setEnabled(False)
         self.helper.setText("Add an audio file to enable transcription")
